@@ -20,9 +20,10 @@ REPO_PATH_PREFIX = "counties/"
 # "csv" or "xlsx"
 OUTPUT_EXT = "csv"
 
-# GitHub target (pre-filled for your repo)
-GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "SMLLC-Dev")
-GITHUB_REPO  = os.environ.get("GITHUB_REPO",  "county-candidate-filings")
+# GitHub target (read from workflow env)
+GITHUB_OWNER = os.environ["GITHUB_OWNER"]
+GITHUB_REPO  = os.environ["GITHUB_REPO"]
+GH_TOKEN     = os.environ.get("GH_TOKEN")  # provided by GITHUB_TOKEN in workflow
 # ------------------------------------------
 
 
