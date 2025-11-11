@@ -1,0 +1,33 @@
+name: Update county files
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Daily ~9:15 AM America/Chicago (convert to UTC: 15:15 during CST)
+    - cron: "15 15 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GITHUB_OWNER: alexbkirk
+      GITHUB_REPO: county-candidate-filings
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install chromium
+
+      - name: Run pipeline
+        run: python pipeline.py
