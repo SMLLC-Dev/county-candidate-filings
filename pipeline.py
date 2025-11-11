@@ -21,9 +21,8 @@ REPO_PATH_PREFIX = "counties/"
 OUTPUT_EXT = "csv"
 
 # GitHub target (pre-filled for your repo)
-GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "alexbkirk")
+GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "SMLLC-Dev")
 GITHUB_REPO  = os.environ.get("GITHUB_REPO",  "county-candidate-filings")
-GH_TOKEN     = os.environ.get("GH_TOKEN")  # required
 # ------------------------------------------
 
 
