@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: write
     env:
-      GITHUB_OWNER: alexbkirk
+      GITHUB_OWNER: SMLLC-Dev
       GITHUB_REPO: county-candidate-filings
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
