@@ -3,7 +3,7 @@ name: Update county files
 on:
   workflow_dispatch: {}
   schedule:
-    # Daily ~9:15 AM America/Chicago (convert to UTC: 15:15 during CST)
+    # Daily ~9:15 AM America/Chicago (15:15 UTC during CST)
     - cron: "15 15 * * *"
 
 jobs:
@@ -12,8 +12,10 @@ jobs:
     permissions:
       contents: write
     env:
+      # Company org/repo
       GITHUB_OWNER: SMLLC-Dev
       GITHUB_REPO: county-candidate-filings
+      # Use the repo's built-in token (no PAT needed)
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
