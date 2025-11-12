@@ -66,50 +66,142 @@ def ensure_folder(prefix: str):
 
 
 def playwright_download_xlsx(dest_dir: Path) -> Path:
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page(accept_downloads=True)
-        page.goto(ELECTION_URL, wait_until="domcontentloaded")
+    """
+    Navigate to the SOS page, click the export, and persist the download robustly.
+    Retries a few times to handle ASP.NET postbacks/races.
+    """
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-        selectors = [
-            'text=/Download All Candidates/i',
-            'text=/Download|Export|Excel|CSV/i',
-            "a:has-text('Download')",
-            "a:has-text('Export')",
-            "button:has-text('Download')",
-            "button:has-text('Export')",
-            "input[type=submit]",
-            "input[type=button]"
-        ]
+    MAX_TRIES = 4
+    DOWNLOAD_TIMEOUT_MS = 120_000  # 2 minutes
+    NAV_TIMEOUT_MS = 60_000
 
-        handle = None
-        for sel in selectors:
+    # Candidate selectors (broad → specific). Add known ASP.NET IDs if you find them.
+    CANDIDATE_SELECTORS = [
+        'text=/Download All Candidates/i',
+        'text=/Export All/i',
+        'text=/Download|Export|Excel|CSV/i',
+        "a:has-text('Download')",
+        "button:has-text('Download')",
+        "a:has-text('Export')",
+        "button:has-text('Export')",
+        "input[type=submit]",
+        "input[type=button]",
+        # Add specific IDs if you can inspect the page:
+        "#MainContent_btnExport",
+        "input#MainContent_btnExport",
+    ]
+
+    def try_click(page):
+        # Find the first visible candidate and click it
+        for sel in CANDIDATE_SELECTORS:
             try:
-                handle = page.wait_for_selector(sel, timeout=3000)
-                if handle:
-                    break
+                el = page.wait_for_selector(sel, timeout=3000, state="visible")
+                if el:
+                    el.click()
+                    return True
             except Exception:
-                pass
+                continue
+        # As a last resort, brute-force click anything that looks like a download/export
+        page.evaluate("""
+            () => {
+              const els = [...document.querySelectorAll('a,button,input[type=submit],input[type=button]')];
+              const btn = els.find(el => /download|export|excel|csv/i.test((el.textContent||'')+(el.value||'')));
+              if (btn) btn.click();
+            }
+        """)
+        return True
 
-        with page.expect_download() as dlinfo:
-            if handle:
-                handle.click()
-            else:
-                page.evaluate("""
-                    () => {
-                      const els = [...document.querySelectorAll('a,button,input[type=submit],input[type=button]')];
-                      const btn = els.find(el => /download|export|excel|csv/i.test((el.textContent||'')+(el.value||'')));
-                      if (btn) btn.click();
-                    }
-                """)
+    with sync_playwright() as p:
+        # Keep the browser open until AFTER we fully persist the download.
+        browser = p.chromium.launch()
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
 
-        download = dlinfo.value
-        suggested = download.suggested_filename
-        out_path = dest_dir / (suggested or "AllCandidates.xlsx")
-        download.save_as(str(out_path))
-        browser.close()
-        return out_path
+        # Be a little more like a user-agent
+        page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+        page.set_default_timeout(NAV_TIMEOUT_MS)
 
+        for attempt in range(1, MAX_TRIES + 1):
+            try:
+                page.goto(ELECTION_URL, wait_until="domcontentloaded")
+                # Give the page a beat to finish postback wiring
+                page.wait_for_timeout(800)
+
+                # fire the click and wait for a download event
+                with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl_info:
+                    try_click(page)
+
+                download = dl_info.value
+
+                # If server aborted the stream, surface reason
+                fail_reason = download.failure()
+                if fail_reason:
+                    print(f"[download] attempt {attempt}: server reported failure: {fail_reason}")
+                    # Try a fresh attempt (reload)
+                    page.reload(wait_until="domcontentloaded")
+                    continue
+
+                suggested = download.suggested_filename or "AllCandidates.xls"
+                out_path = dest_dir / suggested
+
+                # Primary path: save_as (streams to our desired path)
+                try:
+                    download.save_as(str(out_path))
+                    print(f"[download] saved via save_as → {out_path.name}")
+                    # Ensure file is there and non-empty
+                    if out_path.exists() and out_path.stat().st_size > 0:
+                        context.close()
+                        browser.close()
+                        return out_path
+                except Exception as e:
+                    print(f"[download] save_as failed on attempt {attempt}: {type(e).__name__}: {e}")
+
+                # Fallback: if Playwright cached to a temp file, copy that path
+                try:
+                    temp_path = download.path()  # may be None on some platforms
+                except Exception as e:
+                    temp_path = None
+                    print(f"[download] download.path() failed: {type(e).__name__}: {e}")
+
+                if temp_path and os.path.exists(temp_path):
+                    # Copy to our desired location
+                    import shutil
+                    shutil.copy2(temp_path, out_path)
+                    print(f"[download] copied from temp cache → {out_path.name}")
+                    if out_path.exists() and out_path.stat().st_size > 0:
+                        context.close()
+                        browser.close()
+                        return out_path
+
+                # If we get here, the artifact didn’t persist—retry cleanly
+                page.reload(wait_until="domcontentloaded")
+
+            except PWTimeout as te:
+                print(f"[download] timeout on attempt {attempt}: {type(te).__name__}: {te}")
+                # Reload and retry
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                except Exception:
+                    # If reload itself failed, re-open page
+                    page.close()
+                    page = context.new_page()
+
+            except Exception as e:
+                print(f"[download] generic error on attempt {attempt}: {type(e).__name__}: {e}")
+                # Fresh page for next loop
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                page = context.new_page()
+
+        # All attempts failed
+        try:
+            context.close()
+        finally:
+            browser.close()
+        raise RuntimeError("Failed to capture export after multiple attempts. See [download] logs above.")
 
 def load_dataframe_from_file(path: Path) -> pd.DataFrame:
     """
