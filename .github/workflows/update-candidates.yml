@@ -3,8 +3,8 @@ name: Update county files
 on:
   workflow_dispatch: {}
   schedule:
-    # Daily ~9:15 AM America/Chicago (15:15 UTC during CST)
-    - cron: "15 15 * * *"
+    # Daily ~8:15 AM America/Chicago (14:15 UTC during CST)
+    - cron: "15 14 * * *"
 
 jobs:
   run:
