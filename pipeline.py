@@ -25,38 +25,53 @@ GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO  = os.environ["GITHUB_REPO"]
 GH_TOKEN     = os.environ.get("GH_TOKEN")  # provided by GITHUB_TOKEN in workflow
 # ------------------------------------------
+# Canonical county list for validation
+EXPECTED_COUNTIES = {
+    "Adair","Allen","Anderson","Ballard","Barren","Bath","Bell","Boone","Bourbon","Boyd",
+    "Boyle","Bracken","Breathitt","Breckinridge","Bullitt","Butler","Caldwell","Calloway",
+    "Campbell","Carlisle","Carroll","Carter","Casey","Christian","Clark","Clay","Clinton",
+    "Crittenden","Cumberland","Daviess","Edmonson","Elliott","Estill","Fayette","Fleming",
+    "Floyd","Franklin","Fulton","Gallatin","Garrard","Grant","Graves","Grayson","Green",
+    "Greenup","Hancock","Hardin","Harlan","Harrison","Hart","Henderson","Henry","Hickman",
+    "Hopkins","Jackson","Jefferson","Jessamine","Johnson","Kenton","Knox","Larue","Laurel",
+    "Lawrence","Lee","Leslie","Letcher","Lewis","Lincoln","Livingston","Logan","Lyon",
+    "Madison","Magoffin","Marion","Marshall","Martin","Mason","McCracken","McCreary",
+    "McLean","Meade","Menifee","Mercer","Metcalfe","Monroe","Montgomery","Morgan",
+    "Muhlenberg","Nelson","Nicholas","Ohio","Oldham","Owen","Owsley","Pendleton","Perry",
+    "Pike","Powell","Pulaski","Robertson","Rockcastle","Rowan","Russell","Scott","Shelby",
+    "Simpson","Spencer","Taylor","Todd","Trigg","Trimble","Union","Warren","Washington",
+    "Wayne","Webster","Whitley","Wolfe","Woodford"
+}
 
+# ---------- Helper functions ----------
+def normalize_county_name(raw: str) -> str:
+    """Normalize to title-case with Mc/Mac handling."""
+    name = raw.strip().title()
+    name = re.sub(r"\bMc(\w)", lambda m: "Mc" + m.group(1).upper(), name)
+    name = re.sub(r"\bMac(\w)", lambda m: "Mac" + m.group(1).upper(), name)
+    return name
 
 def github_api(path: str, method: str = "GET", json_body: Optional[dict] = None):
     import requests
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{path}"
-    headers = {
-        "Authorization": f"Bearer {GH_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
-    resp = requests.request(method, url, headers=headers, json=json_body)
-    return resp
-
+    headers = {"Authorization": f"Bearer {GH_TOKEN}",
+               "Accept": "application/vnd.github+json"}
+    return requests.request(method, url, headers=headers, json=json_body)
 
 def get_existing_sha(path: str) -> Optional[str]:
-    resp = github_api(path, "GET")
-    if resp.status_code == 200:
-        return resp.json().get("sha")
-    return None
-
+    r = github_api(path, "GET")
+    return r.json().get("sha") if r.status_code == 200 else None
 
 def put_file(path: str, content_bytes: bytes, message: str, sha: Optional[str]):
     encoded = base64.b64encode(content_bytes).decode("utf-8")
     body = {"message": message, "content": encoded}
     if sha:
         body["sha"] = sha
-    resp = github_api(path, "PUT", json_body=body)
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"GitHub PUT failed for {path}: {resp.status_code} {resp.text}")
-
+    r = github_api(path, "PUT", json_body=body)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub PUT failed for {path}: {r.status_code} {r.text}")
 
 def ensure_folder(prefix: str):
-    """Create a .keep file so the folder exists in the repo."""
     if not prefix:
         return
     keep_path = prefix.rstrip("/") + "/.keep"
@@ -325,24 +340,19 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
     )
 
 def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    # Look for any column that contains 'county' (case-insensitive)
     candidates = [c for c in df.columns if "county" in str(c).lower()]
     if not candidates:
-        # Debug: show columns to logs
         print("[split] Columns:", list(df.columns))
         raise ValueError(f"Couldn't find a County column. Columns: {list(df.columns)}")
 
     col = candidates[0]
-    df[col] = df[col].astype(str).str.strip()
-    groups = {}
+    df[col] = df[col].astype(str).map(normalize_county_name)
+    groups: Dict[str, pd.DataFrame] = {}
     for county, sub in df.groupby(col, dropna=True):
-        name = str(county).strip()
-        if not name:
-            continue
-        groups[name] = sub.reset_index(drop=True)
+        county_name = normalize_county_name(str(county))
+        if county_name:
+            groups[county_name] = sub.reset_index(drop=True)
     return groups
-
-
 
 def dataframe_to_bytes(df: pd.DataFrame) -> bytes:
     if OUTPUT_EXT.lower() == "xlsx":
@@ -352,16 +362,12 @@ def dataframe_to_bytes(df: pd.DataFrame) -> bytes:
         return buf.getvalue()
     return df.to_csv(index=False).encode("utf-8")
 
-
 def name_to_filename(county: str) -> str:
-    # Keep readable/stable names (e.g., "Laurel.csv")
-    base = re.sub(r"\s+", " ", county.strip())
-    base = re.sub(r"[^A-Za-z0-9 \-']", "", base).strip()
-    fname = f"{base}.{OUTPUT_EXT}"
+    safe = normalize_county_name(county)
+    fname = f"{safe}.{OUTPUT_EXT}"
     if REPO_PATH_PREFIX:
         return f"{REPO_PATH_PREFIX.rstrip('/')}/{fname}"
     return fname
-
 
 def main():
     if not GH_TOKEN:
@@ -384,6 +390,7 @@ def main():
             print("No county groups found—nothing to upload.")
             return
 
+        total_rows = 0
         for county, subdf in groups.items():
             target_path = name_to_filename(county)
             content = dataframe_to_bytes(subdf)
@@ -391,9 +398,22 @@ def main():
             msg = f"Update {target_path} from latest KY SOS export"
             put_file(target_path, content, msg, sha)
             print(f"Upserted {target_path} ({len(subdf)} rows)")
+            total_rows += len(subdf)
 
-    print("Done.")
+        # ---- Summary & Validation ----
+        print(f"\nTotal rows across all counties: {total_rows}")
+        found = set(groups.keys())
+        missing = EXPECTED_COUNTIES - found
+        unexpected = found - EXPECTED_COUNTIES
+        print("\nValidation summary:")
+        if missing:
+            print("❌ Missing counties:", sorted(missing))
+        if unexpected:
+            print("⚠️ Unexpected county names:", sorted(unexpected))
+        if not missing and not unexpected:
+            print("✅ All expected counties accounted for.")
 
+    print("\n✅ Pipeline complete.")
 
 if __name__ == "__main__":
     main()
