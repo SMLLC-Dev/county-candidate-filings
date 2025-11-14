@@ -374,7 +374,7 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         county_name = normalize_county_name(str(county))
         if not county_name:
             continue
-        sub_sorted = sub.sort_values("__sort_date", ascending=False).drop(columns="__sort_date")
+        sub_sorted = sub.sort_values("__sort_date", ascending=True).drop(columns="__sort_date")
         groups[county_name] = sub_sorted.reset_index(drop=True)
 
     return groups
