@@ -340,19 +340,45 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
     )
 
 def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    candidates = [c for c in df.columns if "county" in str(c).lower()]
-    if not candidates:
+    # Find county column (same as before)
+    county_candidates = [c for c in df.columns if "county" in str(c).lower()]
+    if not county_candidates:
         print("[split] Columns:", list(df.columns))
         raise ValueError(f"Couldn't find a County column. Columns: {list(df.columns)}")
+    county_col = county_candidates[0]
 
-    col = candidates[0]
-    df[col] = df[col].astype(str).map(normalize_county_name)
+    # Normalize county names
+    df = df.copy()
+    df[county_col] = df[county_col].astype(str).map(normalize_county_name)
+
+    # Find a "Date Filed" column (exact preferred; fuzzy allowed)
+    date_col = None
+    exact = [c for c in df.columns if str(c).strip().lower() == "date filed"]
+    if exact:
+        date_col = exact[0]
+    else:
+        fuzzy = [c for c in df.columns if "date" in str(c).lower() and "file" in str(c).lower()]
+        if fuzzy:
+            date_col = fuzzy[0]
+
+    # Compute a sortable datetime if we have the column
+    if date_col:
+        # Robust parse; non-parsable -> NaT, which will sort last
+        df["__sort_date"] = pd.to_datetime(df[date_col], errors="coerce", infer_datetime_format=True)
+    else:
+        df["__sort_date"] = pd.NaT  # keeps behavior but no effective sort
+
+    # Build groups, sorting each group by Date Filed (desc)
     groups: Dict[str, pd.DataFrame] = {}
-    for county, sub in df.groupby(col, dropna=True):
+    for county, sub in df.groupby(county_col, dropna=True):
         county_name = normalize_county_name(str(county))
-        if county_name:
-            groups[county_name] = sub.reset_index(drop=True)
+        if not county_name:
+            continue
+        sub_sorted = sub.sort_values("__sort_date", ascending=False).drop(columns="__sort_date")
+        groups[county_name] = sub_sorted.reset_index(drop=True)
+
     return groups
+
 
 def dataframe_to_bytes(df: pd.DataFrame) -> bytes:
     if OUTPUT_EXT.lower() == "xlsx":
