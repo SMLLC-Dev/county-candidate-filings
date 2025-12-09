@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright
 
 # ----------------- CONFIG -----------------
 ELECTION_URL = "https://web.sos.ky.gov/CandidateFilings/countyfilings.aspx?elecid=86"
@@ -28,24 +28,23 @@ GH_TOKEN = os.environ.get("GH_TOKEN")  # provided by GITHUB_TOKEN in workflow
 
 # Canonical county list for validation
 EXPECTED_COUNTIES = {
-    "Adair", "Allen", "Anderson", "Ballard", "Barren", "Bath", "Bell", "Boone", "Bourbon", "Boyd",
-    "Boyle", "Bracken", "Breathitt", "Breckinridge", "Bullitt", "Butler", "Caldwell", "Calloway",
-    "Campbell", "Carlisle", "Carroll", "Carter", "Casey", "Christian", "Clark", "Clay", "Clinton",
-    "Crittenden", "Cumberland", "Daviess", "Edmonson", "Elliott", "Estill", "Fayette", "Fleming",
-    "Floyd", "Franklin", "Fulton", "Gallatin", "Garrard", "Grant", "Graves", "Grayson", "Green",
-    "Greenup", "Hancock", "Hardin", "Harlan", "Harrison", "Hart", "Henderson", "Henry", "Hickman",
-    "Hopkins", "Jackson", "Jefferson", "Jessamine", "Johnson", "Kenton", "Knox", "Larue", "Laurel",
-    "Lawrence", "Lee", "Leslie", "Letcher", "Lewis", "Lincoln", "Livingston", "Logan", "Lyon",
-    "Madison", "Magoffin", "Marion", "Marshall", "Martin", "Mason", "McCracken", "McCreary",
-    "McLean", "Meade", "Menifee", "Mercer", "Metcalfe", "Monroe", "Montgomery", "Morgan",
-    "Muhlenberg", "Nelson", "Nicholas", "Ohio", "Oldham", "Owen", "Owsley", "Pendleton", "Perry",
-    "Pike", "Powell", "Pulaski", "Robertson", "Rockcastle", "Rowan", "Russell", "Scott", "Shelby",
-    "Simpson", "Spencer", "Taylor", "Todd", "Trigg", "Trimble", "Union", "Warren", "Washington",
-    "Wayne", "Webster", "Whitley", "Wolfe", "Woodford"
+    "Adair","Allen","Anderson","Ballard","Barren","Bath","Bell","Boone","Bourbon","Boyd",
+    "Boyle","Bracken","Breathitt","Breckinridge","Bullitt","Butler","Caldwell","Calloway",
+    "Campbell","Carlisle","Carroll","Carter","Casey","Christian","Clark","Clay","Clinton",
+    "Crittenden","Cumberland","Daviess","Edmonson","Elliott","Estill","Fayette","Fleming",
+    "Floyd","Franklin","Fulton","Gallatin","Garrard","Grant","Graves","Grayson","Green",
+    "Greenup","Hancock","Hardin","Harlan","Harrison","Hart","Henderson","Henry","Hickman",
+    "Hopkins","Jackson","Jefferson","Jessamine","Johnson","Kenton","Knox","Larue","Laurel",
+    "Lawrence","Lee","Leslie","Letcher","Lewis","Lincoln","Livingston","Logan","Lyon",
+    "Madison","Magoffin","Marion","Marshall","Martin","Mason","McCracken","McCreary",
+    "McLean","Meade","Menifee","Mercer","Metcalfe","Monroe","Montgomery","Morgan",
+    "Muhlenberg","Nelson","Nicholas","Ohio","Oldham","Owen","Owsley","Pendleton","Perry",
+    "Pike","Powell","Pulaski","Robertson","Rockcastle","Rowan","Russell","Scott","Shelby",
+    "Simpson","Spencer","Taylor","Todd","Trigg","Trimble","Union","Warren","Washington",
+    "Wayne","Webster","Whitley","Wolfe","Woodford"
 }
 
 # ---------- Helper functions ----------
-
 
 def normalize_county_name(raw: str) -> str:
     """Normalize to title-case with Mc/Mac handling."""
@@ -94,6 +93,8 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
     Navigate to the SOS page, click the export, and persist the download robustly.
     Retries a few times to handle ASP.NET postbacks/races.
     """
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
     MAX_TRIES = 4
     DOWNLOAD_TIMEOUT_MS = 240_000  # 4 minutes
     NAV_TIMEOUT_MS = 60_000
@@ -109,6 +110,7 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
         "button:has-text('Export')",
         "input[type=submit]",
         "input[type=button]",
+        # Add specific IDs if you can inspect the page:
         "#MainContent_btnExport",
         "input#MainContent_btnExport",
     ]
@@ -123,27 +125,25 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
                     return True
             except Exception:
                 continue
+
         # As a last resort, brute-force click anything that looks like a download/export
-        page.evaluate("""
+        page.evaluate(
+            """
             () => {
-              const els = [...document.querySelectorAll('a,button,input[type=submit],input[type=button]')];
-              const btn = els.find(el => /download|export|excel|csv/i.test((el.textContent||'')+(el.value||'')));
-              if (btn) btn.click();
+                const els = [...document.querySelectorAll('a,button,input[type=submit],input[type=button]')];
+                const btn = els.find(el =>
+                    /download|export|excel|csv/i.test((el.textContent||'')+(el.value||''))
+                );
+                if (btn) btn.click();
             }
-        """)
+            """
+        )
         return True
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(args=[
-            "--disable-gpu",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",  # avoid /dev/shm stalls on GH runners
-            "--single-process",
-        ])
-        context = browser.new_context(
-            accept_downloads=True,
-            downloads_path=str(dest_dir),  # persist directly into our temp dir
-        )
+        # Keep the browser open until AFTER we fully persist the download.
+        browser = p.chromium.launch()
+        context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
         # Be a little more like a user-agent
@@ -153,11 +153,10 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
         for attempt in range(1, MAX_TRIES + 1):
             try:
                 page.goto(ELECTION_URL, wait_until="domcontentloaded")
-                # Let network settle a bit
-                page.wait_for_load_state("networkidle", timeout=10_000)
+                # Give the page a beat to finish postback wiring
                 page.wait_for_timeout(800)
 
-                # Fire the click and wait for a download event
+                # fire the click and wait for a download event
                 with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl_info:
                     try_click(page)
 
@@ -167,6 +166,7 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
                 fail_reason = download.failure()
                 if fail_reason:
                     print(f"[download] attempt {attempt}: server reported failure: {fail_reason}")
+                    # Try a fresh attempt (reload)
                     page.reload(wait_until="domcontentloaded")
                     continue
 
@@ -177,12 +177,16 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
                 try:
                     download.save_as(str(out_path))
                     print(f"[download] saved via save_as → {out_path.name}")
+                    # Ensure file is there and non-empty
                     if out_path.exists() and out_path.stat().st_size > 0:
                         context.close()
                         browser.close()
                         return out_path
                 except Exception as e:
-                    print(f"[download] save_as failed on attempt {attempt}: {type(e).__name__}: {e}")
+                    print(
+                        f"[download] save_as failed on attempt {attempt}: "
+                        f"{type(e).__name__}: {e}"
+                    )
 
                 # Fallback: if Playwright cached to a temp file, copy that path
                 try:
@@ -192,7 +196,9 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
                     print(f"[download] download.path() failed: {type(e).__name__}: {e}")
 
                 if temp_path and os.path.exists(temp_path):
+                    # Copy to our desired location
                     import shutil
+
                     shutil.copy2(temp_path, out_path)
                     print(f"[download] copied from temp cache → {out_path.name}")
                     if out_path.exists() and out_path.stat().st_size > 0:
@@ -205,14 +211,16 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
 
             except PWTimeout as te:
                 print(f"[download] timeout on attempt {attempt}: {type(te).__name__}: {te}")
+                # Reload and retry
                 try:
                     page.reload(wait_until="domcontentloaded")
                 except Exception:
+                    # If reload itself failed, re-open page
                     page.close()
                     page = context.new_page()
-
             except Exception as e:
                 print(f"[download] generic error on attempt {attempt}: {type(e).__name__}: {e}")
+                # Fresh page for next loop
                 try:
                     page.close()
                 except Exception:
@@ -230,10 +238,10 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
 def load_dataframe_from_file(path: Path) -> pd.DataFrame:
     """
     Robust loader for KY SOS export:
-      - XLSX (zip) -> openpyxl
-      - Legacy XLS (OLE/BIFF) -> xlrd==1.2.0 (direct, bypass pandas)
-      - Excel-HTML disguised as .xls -> pandas.read_html
-      - CSV fallback with encoding detection
+    - XLSX (zip) -> openpyxl
+    - Legacy XLS (OLE/BIFF) -> xlrd==1.2.0 (direct, bypass pandas)
+    - Excel-HTML disguised as .xls -> pandas.read_html
+    - CSV fallback with encoding detection
     """
     from charset_normalizer import from_path
 
@@ -250,8 +258,10 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
 
     def looks_like_html(b: bytes) -> bool:
         lb = b.lower()
-        return (lb.startswith(b"<") and (b"<html" in lb or b"<table" in lb or b"<!doctype" in lb))
-                or (b"content-type" in lb and b"text/html" in lb)
+        return (
+            (lb.startswith(b"<") and (b"<html" in lb or b"<table" in lb or b"<!doctype" in lb))
+            or (b"content-type" in lb and b"text/html" in lb)
+        )
 
     def pick_table_with_county(dfs):
         if not dfs:
@@ -283,6 +293,7 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
         print("[loader] Detected legacy XLS; using xlrd (direct)")
         try:
             import xlrd  # 1.2.0
+
             book = xlrd.open_workbook(str(path))
             sheet = book.sheet_by_index(0)
 
@@ -296,24 +307,28 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
 
             # Use first non-empty row as header
             header_row_idx = 0
-            while header_row_idx < len(rows) and all((str(v).strip() == "" for v in rows[header_row_idx])):
+            while header_row_idx < len(rows) and all(
+                (str(v).strip() == "" for v in rows[header_row_idx])
+            ):
                 header_row_idx += 1
+
             header = [str(h).strip() for h in rows[header_row_idx]]
-            data = rows[header_row_idx + 1:]
+            data = rows[header_row_idx + 1 :]
 
             # If the header looks binary garbage, try the next row as header
             if len(header) == 1 and len("".join(header)) > 100:
                 if header_row_idx + 1 < len(rows):
                     header = [str(h).strip() for h in rows[header_row_idx + 1]]
-                    data = rows[header_row_idx + 2:]
+                    data = rows[header_row_idx + 2 :]
 
             df = pd.DataFrame(data, columns=header)
+
             # Drop fully-empty columns that happen in BIFF exports
             df = df.dropna(axis=1, how="all")
+
             # Normalize column names
             df.columns = [str(c).strip() for c in df.columns]
             return df
-
         except Exception as e:
             print(f"[loader] xlrd direct failed: {type(e).__name__}: {e}")
             # fall through to other attempts
@@ -338,9 +353,17 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
             for enc2 in ("cp1252", "latin-1"):
                 try:
                     print(f"[loader] Retrying csv with encoding={enc2}")
-                    return pd.read_csv(path, encoding=enc2, engine="python", on_bad_lines="skip")
+                    return pd.read_csv(
+                        path,
+                        encoding=enc2,
+                        engine="python",
+                        on_bad_lines="skip",
+                    )
                 except Exception as e2:
-                    print(f"[loader] csv read with {enc2} failed: {type(e2).__name__}: {e2}")
+                    print(
+                        f"[loader] csv read with {enc2} failed: "
+                        f"{type(e2).__name__}: {e2}"
+                    )
     except Exception as e:
         print(f"[loader] encoding detection failed: {type(e).__name__}: {e}")
 
@@ -354,7 +377,9 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     county_candidates = [c for c in df.columns if "county" in str(c).lower()]
     if not county_candidates:
         print("[split] Columns:", list(df.columns))
-        raise ValueError(f"Couldn't find a County column. Columns: {list(df.columns)}")
+        raise ValueError(
+            f"Couldn't find a County column. Columns: {list(df.columns)}"
+        )
     county_col = county_candidates[0]
 
     # Normalize county names
@@ -367,24 +392,34 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     if exact:
         date_col = exact[0]
     else:
-        fuzzy = [c for c in df.columns if "date" in str(c).lower() and "file" in str(c).lower()]
+        fuzzy = [
+            c
+            for c in df.columns
+            if "date" in str(c).lower() and "file" in str(c).lower()
+        ]
         if fuzzy:
             date_col = fuzzy[0]
 
     # Compute a sortable datetime if we have the column
     if date_col:
         # Robust parse; non-parsable -> NaT, which will sort last
-        df["__sort_date"] = pd.to_datetime(df[date_col], errors="coerce", infer_datetime_format=True)
+        df["__sort_date"] = pd.to_datetime(
+            df[date_col],
+            errors="coerce",
+            infer_datetime_format=True,
+        )
     else:
         df["__sort_date"] = pd.NaT  # keeps behavior but no effective sort
 
-    # Build groups, sorting each group by Date Filed (currently ascending)
+    # Build groups, sorting each group by Date Filed (desc)
     groups: Dict[str, pd.DataFrame] = {}
     for county, sub in df.groupby(county_col, dropna=True):
         county_name = normalize_county_name(str(county))
         if not county_name:
             continue
-        sub_sorted = sub.sort_values("__sort_date", ascending=True).drop(columns="__sort_date")
+        sub_sorted = sub.sort_values("__sort_date", ascending=True).drop(
+            columns="__sort_date"
+        )
         groups[county_name] = sub_sorted.reset_index(drop=True)
 
     return groups
@@ -409,7 +444,10 @@ def name_to_filename(county: str) -> str:
 
 def main():
     if not GH_TOKEN:
-        print("ERROR: GH_TOKEN is required (repo contents write permissions).", file=sys.stderr)
+        print(
+            "ERROR: GH_TOKEN is required (repo contents write permissions).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if REPO_PATH_PREFIX:
@@ -417,6 +455,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as td:
         tmpdir = Path(td)
+
         print("Downloading master spreadsheet…")
         master_path = playwright_download_xlsx(tmpdir)
         print(f"Downloaded: {master_path.name}")
@@ -424,6 +463,7 @@ def main():
         print("Reading and splitting by County…")
         df = load_dataframe_from_file(master_path)
         groups = split_by_county(df)
+
         if not groups:
             print("No county groups found—nothing to upload.")
             return
@@ -443,6 +483,7 @@ def main():
         found = set(groups.keys())
         missing = EXPECTED_COUNTIES - found
         unexpected = found - EXPECTED_COUNTIES
+
         print("\nValidation summary:")
         if missing:
             print("❌ Missing counties:", sorted(missing))
@@ -451,7 +492,7 @@ def main():
         if not missing and not unexpected:
             print("✅ All expected counties accounted for.")
 
-    print("\n✅ Pipeline complete.")
+        print("\n✅ Pipeline complete.")
 
 
 if __name__ == "__main__":
