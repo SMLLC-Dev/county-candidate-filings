@@ -127,21 +127,19 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
         """)
         return True
 
-    with sync_playwright() as p:
-        # Keep the browser open until AFTER we fully persist the download.
+ with sync_playwright() as p:
         browser = p.chromium.launch(args=[
             "--disable-gpu",
             "--no-sandbox",
-            "--disable-dev-shm-usage",  # avoid /dev/shm stalls on GH runners
+            "--disable-dev-shm-usage",
             "--single-process",
         ])
         context = browser.new_context(
             accept_downloads=True,
-            downloads_path=str(dest_dir),  # persist directly into our temp dir
+            downloads_path=str(dest_dir),
         )
         page = context.new_page()
 
-        # Be a little more like a user-agent
         page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
         page.set_default_timeout(NAV_TIMEOUT_MS)
 
