@@ -129,9 +129,17 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
 
     with sync_playwright() as p:
         # Keep the browser open until AFTER we fully persist the download.
-        browser = p.chromium.launch()
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
+browser = p.chromium.launch(args=[
+    "--disable-gpu",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",  # avoid /dev/shm stalls on GH runners
+    "--single-process",
+])
+context = browser.new_context(
+    accept_downloads=True,
+    downloads_path=str(dest_dir),  # persist directly into our temp dir
+)
+page = context.new_page()
 
         # Be a little more like a user-agent
         page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
@@ -141,6 +149,8 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
             try:
                 page.goto(ELECTION_URL, wait_until="domcontentloaded")
                 # Give the page a beat to finish postback wiring
+                page.wait_for_load_state("networkidle", timeout=10_000)  
+                # small settle time
                 page.wait_for_timeout(800)
 
                 # fire the click and wait for a download event
