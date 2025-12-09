@@ -88,7 +88,7 @@ def playwright_download_xlsx(dest_dir: Path) -> Path:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     MAX_TRIES = 4
-    DOWNLOAD_TIMEOUT_MS = 120_000  # 2 minutes
+    DOWNLOAD_TIMEOUT_MS = 240_000  # 4 minutes
     NAV_TIMEOUT_MS = 60_000
 
     # Candidate selectors (broad → specific). Add known ASP.NET IDs if you find them.
