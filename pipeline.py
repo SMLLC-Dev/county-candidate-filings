@@ -373,4 +373,86 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     # Compute a sortable datetime if we have the column
     if date_col:
-        # R
+        # Robust parse; non-parsable -> NaT, which will sort last
+        df["__sort_date"] = pd.to_datetime(df[date_col], errors="coerce", infer_datetime_format=True)
+    else:
+        df["__sort_date"] = pd.NaT  # keeps behavior but no effective sort
+
+    # Build groups, sorting each group by Date Filed (currently ascending)
+    groups: Dict[str, pd.DataFrame] = {}
+    for county, sub in df.groupby(county_col, dropna=True):
+        county_name = normalize_county_name(str(county))
+        if not county_name:
+            continue
+        sub_sorted = sub.sort_values("__sort_date", ascending=True).drop(columns="__sort_date")
+        groups[county_name] = sub_sorted.reset_index(drop=True)
+
+    return groups
+
+
+def dataframe_to_bytes(df: pd.DataFrame) -> bytes:
+    if OUTPUT_EXT.lower() == "xlsx":
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+        return buf.getvalue()
+    return df.to_csv(index=False).encode("utf-8")
+
+
+def name_to_filename(county: str) -> str:
+    safe = normalize_county_name(county)
+    fname = f"{safe}.{OUTPUT_EXT}"
+    if REPO_PATH_PREFIX:
+        return f"{REPO_PATH_PREFIX.rstrip('/')}/{fname}"
+    return fname
+
+
+def main():
+    if not GH_TOKEN:
+        print("ERROR: GH_TOKEN is required (repo contents write permissions).", file=sys.stderr)
+        sys.exit(1)
+
+    if REPO_PATH_PREFIX:
+        ensure_folder(REPO_PATH_PREFIX)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmpdir = Path(td)
+        print("Downloading master spreadsheet…")
+        master_path = playwright_download_xlsx(tmpdir)
+        print(f"Downloaded: {master_path.name}")
+
+        print("Reading and splitting by County…")
+        df = load_dataframe_from_file(master_path)
+        groups = split_by_county(df)
+        if not groups:
+            print("No county groups found—nothing to upload.")
+            return
+
+        total_rows = 0
+        for county, subdf in groups.items():
+            target_path = name_to_filename(county)
+            content = dataframe_to_bytes(subdf)
+            sha = get_existing_sha(target_path)
+            msg = f"Update {target_path} from latest KY SOS export"
+            put_file(target_path, content, msg, sha)
+            print(f"Upserted {target_path} ({len(subdf)} rows)")
+            total_rows += len(subdf)
+
+        # ---- Summary & Validation ----
+        print(f"\nTotal rows across all counties: {total_rows}")
+        found = set(groups.keys())
+        missing = EXPECTED_COUNTIES - found
+        unexpected = found - EXPECTED_COUNTIES
+        print("\nValidation summary:")
+        if missing:
+            print("❌ Missing counties:", sorted(missing))
+        if unexpected:
+            print("⚠️ Unexpected county names:", sorted(unexpected))
+        if not missing and not unexpected:
+            print("✅ All expected counties accounted for.")
+
+    print("\n✅ Pipeline complete.")
+
+
+if __name__ == "__main__":
+    main()
