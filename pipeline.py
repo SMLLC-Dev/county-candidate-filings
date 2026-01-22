@@ -402,7 +402,7 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     # Compute a sortable datetime if we have the column
     if date_col:
-    s = df[date_col]
+        s = df[date_col]
 
     # If it's numeric (Excel serial dates), convert from Excel epoch.
     if pd.api.types.is_numeric_dtype(s):
