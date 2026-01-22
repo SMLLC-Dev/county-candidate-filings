@@ -401,25 +401,39 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             date_col = fuzzy[0]
 
     # Compute a sortable datetime if we have the column
+        # Compute a sortable datetime if we have the column
     if date_col:
         s = df[date_col]
 
-    # If it's numeric (Excel serial dates), convert from Excel epoch.
-    if pd.api.types.is_numeric_dtype(s):
-        df["__sort_date"] = pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
-    else:
-        # Try normal parse first
-        df["__sort_date"] = pd.to_datetime(s, errors="coerce")
+        # If it's numeric (Excel serial dates), convert from Excel epoch.
+        if pd.api.types.is_numeric_dtype(s):
+            df["__sort_date"] = pd.to_datetime(
+                s,
+                unit="D",
+                origin="1899-12-30",
+                errors="coerce",
+            )
+        else:
+            # Try normal parse first
+            df["__sort_date"] = pd.to_datetime(
+                s,
+                errors="coerce",
+            )
 
-        # If many failed, try pandas "mixed" parsing (pandas 2.x)
-        if df["__sort_date"].isna().mean() > 0.50:
-            try:
-                df["__sort_date"] = pd.to_datetime(s, errors="coerce", format="mixed")
-            except TypeError:
-                # Older pandas doesn't support format="mixed"
-                pass
-else:
-    df["__sort_date"] = pd.NaT
+            # If many failed, try pandas "mixed" parsing (pandas 2.x)
+            if df["__sort_date"].isna().mean() > 0.50:
+                try:
+                    df["__sort_date"] = pd.to_datetime(
+                        s,
+                        errors="coerce",
+                        format="mixed",
+                    )
+                except TypeError:
+                    # Older pandas doesn't support format="mixed"
+                    pass
+    else:
+        df["__sort_date"] = pd.NaT
+
 
     # Build groups, sorting each group by Date Filed (desc)
     groups: Dict[str, pd.DataFrame] = {}
