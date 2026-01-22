@@ -404,7 +404,6 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     if date_col:
         s = df[date_col]
 
-        # If it's numeric (Excel serial dates), convert from Excel epoch.
         if pd.api.types.is_numeric_dtype(s):
             df["__sort_date"] = pd.to_datetime(
                 s,
@@ -413,13 +412,11 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
                 errors="coerce",
             )
         else:
-            # Try normal parse first
             df["__sort_date"] = pd.to_datetime(
                 s,
                 errors="coerce",
             )
 
-            # If many failed, try pandas "mixed" parsing (pandas 2.x)
             if df["__sort_date"].isna().mean() > 0.50:
                 try:
                     df["__sort_date"] = pd.to_datetime(
@@ -428,7 +425,6 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
                         format="mixed",
                     )
                 except TypeError:
-                    # Older pandas doesn't support format="mixed"
                     pass
     else:
         df["__sort_date"] = pd.NaT
