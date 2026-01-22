@@ -406,7 +406,7 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         df["__sort_date"] = pd.to_datetime(
             df[date_col],
             errors="coerce",
-            infer_datetime_format=True,
+            infer_datetime_format="mixed",
         )
     else:
         df["__sort_date"] = pd.NaT  # keeps behavior but no effective sort
