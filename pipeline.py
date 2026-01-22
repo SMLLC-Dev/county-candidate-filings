@@ -401,7 +401,6 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
             date_col = fuzzy[0]
 
     # Compute a sortable datetime if we have the column
-        # Compute a sortable datetime if we have the column
     if date_col:
         s = df[date_col]
 
@@ -433,8 +432,7 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
                     pass
     else:
         df["__sort_date"] = pd.NaT
-
-
+    
     # Build groups, sorting each group by Date Filed (desc)
     groups: Dict[str, pd.DataFrame] = {}
     for county, sub in df.groupby(county_col, dropna=True):
