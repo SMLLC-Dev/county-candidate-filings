@@ -2,10 +2,9 @@ name: Update county files
 
 on:
   workflow_dispatch: {}
-  # Schedule removed to stop updates currently
-  # schedule:
-    # Daily ~6:15 AM America/Chicago (12:15 UTC during CST)
-    # - cron: "15 12 * * *"
+   schedule:
+     # Daily ~6:15 AM America/Chicago (12:15 UTC during CST)
+     - cron: "15 12 * * *"
 
 jobs:
   run:
