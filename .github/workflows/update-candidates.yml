@@ -2,7 +2,7 @@ name: Update county files
 
 on:
   workflow_dispatch: {}
-   schedule:
+  schedule:
      # Daily ~6:15 AM America/Chicago (12:15 UTC during CST)
      - cron: "15 12 * * *"
 
