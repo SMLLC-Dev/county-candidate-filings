@@ -11,7 +11,7 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 
 # ----------------- CONFIG -----------------
-ELECTION_URL = "https://web.sos.ky.gov/CandidateFilings/countyfilings.aspx?elecid=86"
+ELECTION_URL = "https://web.sos.ky.gov/CandidateFilings/countyfilings.aspx?elecid=87"
 
 # Files will be written to this folder in your repo (create automatically).
 # Use "" for repo root, or "counties/" to keep things organized.
