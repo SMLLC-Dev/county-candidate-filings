@@ -373,7 +373,7 @@ def load_dataframe_from_file(path: Path) -> pd.DataFrame:
 
 
 def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    # Find county column (same as before)
+    # Find county column
     county_candidates = [c for c in df.columns if "county" in str(c).lower()]
     if not county_candidates:
         print("[split] Columns:", list(df.columns))
@@ -428,16 +428,35 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
                     pass
     else:
         df["__sort_date"] = pd.NaT
-    
-    # Build groups, sorting each group by Date Filed (desc)
+
+    # Find an "Office" column (exact preferred; fuzzy allowed)
+    office_col = None
+    exact_office = [c for c in df.columns if str(c).strip().lower() == "office"]
+    if exact_office:
+        office_col = exact_office[0]
+    else:
+        fuzzy_office = [c for c in df.columns if "office" in str(c).lower()]
+        if fuzzy_office:
+            office_col = fuzzy_office[0]
+
+    # Build a normalized office sort key (preserves the original column;
+    # casefold + strip keeps ordering stable despite spacing/case differences)
+    if office_col:
+        df["__sort_office"] = df[office_col].astype(str).str.strip().str.casefold()
+    else:
+        print("[split] No Office column found; falling back to date-only sort.")
+        df["__sort_office"] = ""
+
+    # Build groups, sorting each by Office (asc), then Date Filed (asc) within
     groups: Dict[str, pd.DataFrame] = {}
     for county, sub in df.groupby(county_col, dropna=True):
         county_name = normalize_county_name(str(county))
         if not county_name:
             continue
-        sub_sorted = sub.sort_values("__sort_date", ascending=True).drop(
-            columns="__sort_date"
-        )
+        sub_sorted = sub.sort_values(
+            ["__sort_office", "__sort_date"],
+            ascending=[True, True],
+        ).drop(columns=["__sort_office", "__sort_date"])
         groups[county_name] = sub_sorted.reset_index(drop=True)
 
     return groups
