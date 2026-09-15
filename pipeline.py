@@ -54,6 +54,33 @@ def normalize_county_name(raw: str) -> str:
     return name
 
 
+def move_column_after(df: pd.DataFrame, col_to_move: str, after_col: str) -> pd.DataFrame:
+    """
+    Reorder columns so `col_to_move` sits immediately after `after_col`.
+    Matches names case-insensitively (ignoring surrounding whitespace).
+    If either column is missing, returns the frame unchanged.
+    """
+    def find(name):
+        target = name.strip().lower()
+        for c in df.columns:
+            if str(c).strip().lower() == target:
+                return c
+        return None
+
+    move = find(col_to_move)
+    after = find(after_col)
+    if move is None or after is None:
+        missing = col_to_move if move is None else after_col
+        print(f"[reorder] '{missing}' column not found; leaving column order unchanged.")
+        return df
+
+    cols = list(df.columns)
+    cols.remove(move)
+    insert_at = cols.index(after) + 1
+    cols.insert(insert_at, move)
+    return df[cols]
+
+
 def github_api(path: str, method: str = "GET", json_body: Optional[dict] = None):
     import requests
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{path}"
@@ -385,6 +412,9 @@ def split_by_county(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     # Normalize county names
     df = df.copy()
     df[county_col] = df[county_col].astype(str).map(normalize_county_name)
+
+    # Move Withdrawn to just after Suffix
+    df = move_column_after(df, "Withdrawn", "Suffix")
 
     # Find a "Date Filed" column (exact preferred; fuzzy allowed)
     date_col = None
