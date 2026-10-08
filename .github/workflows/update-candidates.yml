@@ -4,7 +4,7 @@ on:
   workflow_dispatch: {}
   schedule:
      # Daily ~6:15 AM America/Chicago (12:15 UTC during CST)
-     - cron: "15 12 * * *"
+     - cron: "15 6 * * *"
 
 jobs:
   run:
